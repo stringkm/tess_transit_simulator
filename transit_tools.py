@@ -3,7 +3,17 @@
 ### Functions to model the transit of the planet across the star
 import numpy as np
 
+
 ############# FUNCTIONS #######################################
+
+### Read ck solar-type models
+def modelReader(temp):
+   bstring = np.genfromtxt('./ck_models/ckm00/ckp00_'+str(temp)+'.ascii'\
+   ,delimiter='\s+',dtype=None)
+   lstring = [a.decode('utf-8') for a in bstring]
+   wave = [float(a.split()[0]) for a in lstring]
+   fluxdens = [float(a.split()[-1]) for a in lstring]
+   return wave,fluxdens
 
 ### Calculate the star's mass from the temperature
 def calcStarMass(tstar):
@@ -42,10 +52,10 @@ def calcAreaBlocked(rplanet,rstar,dd):
 
 ### Calculate the amount of star flux blocked by planet
 def calcFluxBlocked(objarea,rstar):
-   return (objarea/(np.pi*rstar**2))
+   return (objarea/(np.pi*(rstar)**2)) ## cgs units
 
 ### Transit wrapper Function
-def calcTransit(period,r_planet,r_star,semia,inclination):
+def calcTransit(totflux,period,r_planet,r_star,semia,inclination):
    ### Calculate total transit time
    transtime = calcTotalTransitTime(period,r_planet,r_star,semia,inclination)
    omega = np.pi/period
@@ -57,11 +67,11 @@ def calcTransit(period,r_planet,r_star,semia,inclination):
    ### Convert inclination angle into radians
    inclination = (2*np.pi/360)*inclination
    ### Scale the semimajor axis to the planet's radius
-   semia = semia/r_star
+   #semia = semia/r_star
    ### Scale the planet's radius to the planet's radius
-   r_planet = r_planet/r_star
+   #r_planet = r_planet/r_star
    ### Scale the planet's radius to 1
-   r_star = r_star/r_star
+   #r_star = r_star/r_star
 
    ### Calculate the impact parameter
    b = semia*np.cos(inclination)/r_star
@@ -81,7 +91,55 @@ def calcTransit(period,r_planet,r_star,semia,inclination):
       else:
          area = calcAreaBlocked(r_planet,r_star,dist)
          flux[j] = 1-calcFluxBlocked(area,r_star)
-   return times, times*(period*2*np.pi)/360, flux
+   return times, times*(period)/(2*np.pi), totflux*flux
+
+### Get base flux values in curve with star radius
+#def multiplyFlux(ckflux,flux,rstar):
+#   return ckflux*(rstar**2)
+
+### Convolve the flux with the TESS bandpass (only do this once)
+def interpTESSFilter(ckwave):
+   test = np.genfromtxt('./tess-response-function-v1.0.csv',\
+      delimiter=',',skip_header = 8,dtype=None)
+   wave = [float(a) for a in test[:,0]]
+   throughput = [float(a) for a in test[:,1]]
+   tck =  np.interp(ckwave,wave,throughput)
+   np.savetxt('./tess_ck_response.csv', np.array([ckwave,tck]).T, \
+      delimiter=',')
+   return
+
+### Read in the Tess response functions
+def read_TESS_response():
+   tesstemp = np.loadtxt('./tess_ck_response.csv',delimiter=',')
+   return tesstemp[:,0],tesstemp[:,1]
+
+### Multiply the ckflux by the TESS tess_response
+def convolveFilter(tess_efficiency,ck_flux,rstar):
+   return [a*b for a,b in zip(tess_efficiency,ck_flux)]
+
+### Integrate over flux curve
+def integrateFlux(fwave,fcurve):
+   return np.trapz(fcurve,x=fwave)
+
+### Calculate magnitudes
+def calcMag(fluxes,distance,rstar):
+   fluxes = (10**18)*((rstar)**2/(3.0857e16*distance)**2)*fluxes#distance ### convert pc into meters
+   return [-2.5*np.log10(a) for a in fluxes]#+ 2.5*np.log10(distance**2) for a in fluxes]
+
+### Read in TESS noise function
+def readTessError():
+   test= np.loadtxt('./tess_noise.txt',delimiter=' ',skiprows=1)
+   return test[0], test[0], test[0], test[0]
+
+### Fit a function to TESS error curve
+def fitError(errmag,noise):
+   popt,pcov = np.polyfit(errmag, noise, 4)
+   return popt
+
+### Determine noise for this magnitude
+def calcNoise(popt,magnitudes):
+   return [popt[0]*a**4 + popt[1]*a**3 + popt[2]*a**2 + popt[3]*a + popt[4] \
+      for a in magnitudes]
 
 ################ USAGE ######################################
 
@@ -91,28 +149,50 @@ if __name__== "__main__":
 
    ### Define inputs
    ### The example is Sun / Jupiter
-   teff_s = 5777 ### solar effective temperature
+   teff = 5750 ### solar effective temperature
    rp = 69.911e6 ### Radius of Jupiter in meters
    mp = 1.898e27 ### mass of Jupiter in kg
    a = (1.496e11)*5.2 ### Semimajor axis of Jupiter in meters
-   i = 89.9488
+   i = 90#89.9488
+   d = 1./(2.06265e5)#10 # distance in parsecs
+
+   ckw,ckfd = modelReader(teff)
+   interpTESSFilter(ckw)
+
+   tw, tr = read_TESS_response()
 
    ### Estimate the stellar mass & radius
-   ms = calcStarMass(teff_s)
+   ms = calcStarMass(teff)
    rs = calcStarRadius(ms)
+
+   ### Convolve the filter with the model flux
+   stflux = convolveFilter(tr,ckfd,rs)
+
+   ### Integrate over total flux
+   tf = integrateFlux(tw,stflux)
 
    ### Estimate the orbital period
    p = estimatePeriod(ms,mp,a)
 
    ### Model the transit curve
-   phase, t,f = calcTransit(p,rp,rs,a,i)
+   phase, t,f = calcTransit(tf,p,rp,rs,a,i)
+
+   ### Calculate the magnitude
+   mags = calcMag(f,d,rs)
+
+   ### Read in TESS errors and fit a function to them
+   #tm, te1, te2, te27 = readTessError()
+   #polys = fitError(tm,te2)
+   #me = calcNoise(polys,mags)
 
    ### Calculate the approximate total transit time
    tt = calcTotalTransitTime(p,rp,rs,a,i)
    print('Total transit time = ',str(tt/86400)[0:6],'days')
 
-   plt.plot(phase,f)
-   plt.xlabel('Phase')
-   plt.ylabel('Flux')
+   #plt.errorbar((1./86400)*t,me)
+   plt.plot((1./86400)*t,mags)
+   plt.xlabel('Time (days)')
+   plt.ylabel('Magnitude (mag)')
+   plt.gca().invert_yaxis()
    plt.figtext(0.7,0.7,'Total transit time \n'+str(tt/86400)[0:6]+' days')
    plt.show()
