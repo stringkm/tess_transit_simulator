@@ -18,6 +18,12 @@ def estimatePeriod(mass_p, mass_s, semi_a):
    return np.sqrt((4*np.pi*np.pi*(semi_a**3))/\
       (6.67e-11*(mass_p+mass_s)))
 
+### Estimate the total transit time
+def calcTotalTransitTime(period,rplanet,rstar,semi_a,inclination):
+   return (period*rstar)/(np.pi*semi_a)*\
+      np.sqrt((1+(rplanet/rstar))**2-\
+      ((semi_a/rstar)*np.cos((2*np.pi/360)*inclination))**2)
+
 ### Calculate position for each update
 def calcDist(semi_a,objtime,obji,rstar):
    dd = semi_a*np.sqrt((np.sin(objtime)**2)+\
@@ -39,9 +45,15 @@ def calcFluxBlocked(objarea,rstar):
    return (objarea/(np.pi*rstar**2))
 
 ### Transit wrapper Function
-def calcTransit(r_planet,r_star,semia,inclination):
-   times = np.linspace(-0.05*np.pi, 0.05*np.pi,100)
+def calcTransit(period,r_planet,r_star,semia,inclination):
+   ### Calculate total transit time
+   transtime = calcTotalTransitTime(period,r_planet,r_star,semia,inclination)
+   omega = np.pi/period
+   trans_angle = omega*transtime
+
+   times = np.linspace(-2*trans_angle, 2*trans_angle,10000)
    flux = np.ones(len(times))
+
    ### Convert inclination angle into radians
    inclination = (2*np.pi/360)*inclination
    ### Scale the semimajor axis to the planet's radius
@@ -54,7 +66,6 @@ def calcTransit(r_planet,r_star,semia,inclination):
    ### Calculate the impact parameter
    b = semia*np.cos(inclination)/r_star
 
-   print(r_star,r_planet,semia)
    ### Determine if the planet is blocking the star
    for j in range(len(times)):
       ### Determine x positions of the planet
@@ -63,25 +74,28 @@ def calcTransit(r_planet,r_star,semia,inclination):
       if (abs(dist) > r_star):
          pass
       ### If the planet is well past the edge of the star's disk
-      elif (abs(dist) < (r_star-r_planet)):
+      elif (abs(dist) <= (r_star - r_planet)):
          area = np.pi*r_planet**2
          flux[j] = 1-calcFluxBlocked(area,r_star)
       ### If the planet is on the edge of the star disk
       else:
-         print(dist/r_planet)
          area = calcAreaBlocked(r_planet,r_star,dist)
          flux[j] = 1-calcFluxBlocked(area,r_star)
-   return times, flux
+   return times, times*(period*2*np.pi)/360, flux
 
 ################ USAGE ######################################
 
 if __name__== "__main__":
+
+   import matplotlib.pyplot as plt
+
    ### Define inputs
    ### The example is Sun / Jupiter
    teff_s = 5777 ### solar effective temperature
    rp = 69.911e6 ### Radius of Jupiter in meters
    mp = 1.898e27 ### mass of Jupiter in kg
-   a = (1.496e11)*0.1 ### Semimajor axis of Jupiter in meters
+   a = (1.496e11)*5.2 ### Semimajor axis of Jupiter in meters
+   i = 89.9488
 
    ### Estimate the stellar mass & radius
    ms = calcStarMass(teff_s)
@@ -91,4 +105,14 @@ if __name__== "__main__":
    p = estimatePeriod(ms,mp,a)
 
    ### Model the transit curve
-   t,f = calcTransit(rp,rs,a,90)
+   phase, t,f = calcTransit(p,rp,rs,a,i)
+
+   ### Calculate the approximate total transit time
+   tt = calcTotalTransitTime(p,rp,rs,a,i)
+   print('Total transit time = ',str(tt/86400)[0:6],'days')
+
+   plt.plot(phase,f)
+   plt.xlabel('Phase')
+   plt.ylabel('Flux')
+   plt.figtext(0.7,0.7,'Total transit time \n'+str(tt/86400)[0:6]+' days')
+   plt.show()
