@@ -2,6 +2,7 @@
 ### Katelyn Stringer May 6, 2018
 ### Functions to model the transit of the planet across the star
 import numpy as np
+#from scipy.optimize import curve_fit
 
 
 ############# FUNCTIONS #######################################
@@ -9,10 +10,10 @@ import numpy as np
 ### Read ck solar-type models
 def modelReader(temp):
    bstring = np.genfromtxt('./ck_models/ckm00/ckp00_'+str(temp)+'.ascii'\
-   ,delimiter='\s+',dtype=None)
-   lstring = [a.decode('utf-8') for a in bstring]
-   wave = [float(a.split()[0]) for a in lstring]
-   fluxdens = [float(a.split()[-1]) for a in lstring]
+   ,delimiter='\s+',dtype=None, encoding='utf-8')
+   #lstring = [a.decode('utf-8') for a in bstring]
+   wave = [float(a.split()[0]) for a in bstring]
+   fluxdens = [float(a.split()[-1]) for a in bstring]
    return wave,fluxdens
 
 ### Calculate the star's mass from the temperature
@@ -58,8 +59,12 @@ def calcFluxBlocked(objarea,rstar):
 def calcTransit(totflux,period,r_planet,r_star,semia,inclination):
    ### Calculate total transit time
    transtime = calcTotalTransitTime(period,r_planet,r_star,semia,inclination)
+   if np.isfinite(transtime)==False:
+      transtime = 0
+
    omega = np.pi/period
    trans_angle = omega*transtime
+
 
    times = np.linspace(-2*trans_angle, 2*trans_angle,10000)
    flux = np.ones(len(times))
@@ -81,7 +86,7 @@ def calcTransit(totflux,period,r_planet,r_star,semia,inclination):
       ### Determine x positions of the planet
       dist = calcDist(semia,times[j],inclination,r_star)
       ### If the planet is not blocking the star
-      if (abs(dist) > r_star):
+      if (abs(dist) > (r_star+r_planet)):
          pass
       ### If the planet is well past the edge of the star's disk
       elif (abs(dist) <= (r_star - r_planet)):
@@ -91,11 +96,7 @@ def calcTransit(totflux,period,r_planet,r_star,semia,inclination):
       else:
          area = calcAreaBlocked(r_planet,r_star,dist)
          flux[j] = 1-calcFluxBlocked(area,r_star)
-   return times, times*(period)/(2*np.pi), totflux*flux
-
-### Get base flux values in curve with star radius
-#def multiplyFlux(ckflux,flux,rstar):
-#   return ckflux*(rstar**2)
+   return times, times*(period)/(2*np.pi), totflux*flux, trans_angle
 
 ### Convolve the flux with the TESS bandpass (only do this once)
 def interpTESSFilter(ckwave):
@@ -129,17 +130,55 @@ def calcMag(fluxes,distance,rstar):
 ### Read in TESS noise function
 def readTessError():
    test= np.loadtxt('./tess_noise.txt',delimiter=' ',skiprows=1)
-   return test[0], test[0], test[0], test[0]
+   return test[:,0], test[:,1], test[:,2], test[:,3]
+'''
+def exponentialFit(A,B,C,x):
+   return A*np.exp(B*x)+C
+
+def quadFit(A,B,C,D,E,F,x):
+   return A*x**5 + B*x**4 + C*x**3 + D*x**2 + E*x + F
 
 ### Fit a function to TESS error curve
 def fitError(errmag,noise):
-   popt,pcov = np.polyfit(errmag, noise, 4)
+   popt,pcov= curve_fit(quadFit,errmag,np.log10(0.000001*noise))#np.polyfit(errmag, 0.000001*noise, 4)
    return popt
-
+'''
 ### Determine noise for this magnitude
-def calcNoise(popt,magnitudes):
-   return [popt[0]*a**4 + popt[1]*a**3 + popt[2]*a**2 + popt[3]*a + popt[4] \
-      for a in magnitudes]
+def calcNoise(errmag,noise,magnitudes):
+   return np.interp(magnitudes,errmag,noise)#[quadFit(popt[0],popt[1],popt[2],popt[3],popt[4],popt[5],a) \
+      #for a in magnitudes]  #popt[0]*a**4 + popt[1]*a**3 + popt[2]*a**2 + popt[3]*a + popt[4]
+
+def calcSNR(magnitudes,magnituderrs):
+   return (max(magnitudes)-min(magnitudes))/np.mean(magnituderrs)#np.std(magnituderrs)
+
+
+### Overarching FUNCTIONS
+def setupTransit():
+   tw, tr = read_TESS_response()
+   tm, te1, te2, te27 = readTessError()
+   return tw,tr,tm,te2
+
+def doTransit(teff,rp,mp,a,d,i,tw,tr,tm,te2):
+   ckw,ckfd = modelReader(teff)
+   ms = calcStarMass(teff)
+   rs = calcStarRadius(ms)
+   stflux = convolveFilter(tr,ckfd,rs)
+   ### Integrate over total flux
+   tf = integrateFlux(tw,stflux)
+   ### Estimate the orbital period
+   p = estimatePeriod(ms,mp,a)
+   ### Model the transit curve
+   phase, t, f, tangle = calcTransit(tf,p,rp,rs,a,i)
+   ### Calculate the magnitude
+   mags = calcMag(f,d,rs)
+   ### Read in TESS errors and fit a function to them
+   tm, te1, te2, te27 = readTessError()
+   #polys = fitError(tm,te2)
+   me = calcNoise(tm,0.000001*te2,mags)
+   snr = calcSNR(mags,me)
+   ### Calculate the approximate total transit time
+   tt = calcTotalTransitTime(p,rp,rs,a,i)
+   return snr,tt,tangle,phase,t,mags,me,p
 
 ################ USAGE ######################################
 
@@ -154,7 +193,7 @@ if __name__== "__main__":
    mp = 1.898e27 ### mass of Jupiter in kg
    a = (1.496e11)*5.2 ### Semimajor axis of Jupiter in meters
    i = 90#89.9488
-   d = 1./(2.06265e5)#10 # distance in parsecs
+   d = 10#250#1./(2.06265e5)#10 # distance in parsecs
 
    ckw,ckfd = modelReader(teff)
    interpTESSFilter(ckw)
@@ -175,24 +214,32 @@ if __name__== "__main__":
    p = estimatePeriod(ms,mp,a)
 
    ### Model the transit curve
-   phase, t,f = calcTransit(tf,p,rp,rs,a,i)
+   phase, t, f, tangle = calcTransit(tf,p,rp,rs,a,i)
 
    ### Calculate the magnitude
    mags = calcMag(f,d,rs)
 
    ### Read in TESS errors and fit a function to them
-   #tm, te1, te2, te27 = readTessError()
+   tm, te1, te2, te27 = readTessError()
    #polys = fitError(tm,te2)
-   #me = calcNoise(polys,mags)
+   me = calcNoise(tm,0.000001*te2,mags)
+
+   snr = calcSNR(mags,me)
+
+
+   sn,tt_,ta,ph,t_,ma,merr,per = doTransit(teff,rp,\
+               mp,a,d,i,tw,tr,tm,te2)
 
    ### Calculate the approximate total transit time
    tt = calcTotalTransitTime(p,rp,rs,a,i)
    print('Total transit time = ',str(tt/86400)[0:6],'days')
+   print('SNR = ',str(snr)[0:6])
 
-   #plt.errorbar((1./86400)*t,me)
+   plt.errorbar((1./86400)*t,mags,yerr=me)
    plt.plot((1./86400)*t,mags)
    plt.xlabel('Time (days)')
    plt.ylabel('Magnitude (mag)')
    plt.gca().invert_yaxis()
-   plt.figtext(0.7,0.7,'Total transit time \n'+str(tt/86400)[0:6]+' days')
+   plt.figtext(0.7,0.5,'Total transit time \n'+str(tt/86400)[0:6]+' days')
+   plt.figtext(0.15,0.5,'SNR = '+str(snr)[0:6]+'')
    plt.show()
