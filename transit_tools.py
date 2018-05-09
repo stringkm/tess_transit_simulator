@@ -14,7 +14,7 @@ def modelReader(temp):
    #lstring = [a.decode('utf-8') for a in bstring]
    wave = [float(a.split()[0]) for a in bstring]
    fluxdens = [float(a.split()[-1]) for a in bstring]
-   return wave,fluxdens
+   return [0.1*a for a in wave],fluxdens
 
 ### Calculate the star's mass from the temperature
 def calcStarMass(tstar):
@@ -27,7 +27,7 @@ def calcStarRadius(mstar):
 ### Estimate period of orbit
 def estimatePeriod(mass_p, mass_s, semi_a):
    return np.sqrt((4*np.pi*np.pi*(semi_a**3))/\
-      (6.67e-11*(mass_p+mass_s)))
+      (6.67e-11*(mass_p + mass_s)))
 
 ### Estimate the total transit time
 def calcTotalTransitTime(period,rplanet,rstar,semi_a,inclination):
@@ -53,7 +53,7 @@ def calcAreaBlocked(rplanet,rstar,dd):
 
 ### Calculate the amount of star flux blocked by planet
 def calcFluxBlocked(objarea,rstar):
-   return (objarea/(np.pi*(rstar)**2)) ## cgs units
+   return (objarea/(np.pi*(rstar**2))) ## cgs units
 
 ### Transit wrapper Function
 def calcTransit(totflux,period,r_planet,r_star,semia,inclination):
@@ -124,8 +124,19 @@ def integrateFlux(fwave,fcurve):
 
 ### Calculate magnitudes
 def calcMag(fluxes,distance,rstar):
-   fluxes = (10**18)*((rstar)**2/(3.0857e16*distance)**2)*fluxes#distance ### convert pc into meters
-   return [-2.5*np.log10(a) for a in fluxes]#+ 2.5*np.log10(distance**2) for a in fluxes]
+   fluxes = (10**6)*(((rstar)**2)/((3.0857e16*10)**2))*fluxes#distance ### convert pc into meters
+   return [-2.5*np.log10(a) - 0.617918 + 5*np.log10(distance)-5 for a in fluxes]#+ 2.5*np.log10(distance**2) for a in fluxes]
+
+### Calculate Vega magnitude
+def calcVega():
+   vw,vf = modelReader(9500)
+   tw_, tr_, tm_, te2_ = setupTransit()
+   mv = calcStarMass(9500)
+   rv = calcStarRadius(mv)
+   vf_ = convolveFilter(tr_,vw,rv)
+   tf = integrateFlux(tw_,vf_)
+   vegamag = -2.5*np.log10((10**10)*((rv)**2/(3.0857e16*10)**2)*tf)
+   return vegamag
 
 ### Read in TESS noise function
 def readTessError():
@@ -145,11 +156,11 @@ def fitError(errmag,noise):
 '''
 ### Determine noise for this magnitude
 def calcNoise(errmag,noise,magnitudes):
-   return np.interp(magnitudes,errmag,noise)#[quadFit(popt[0],popt[1],popt[2],popt[3],popt[4],popt[5],a) \
+   return [-2.5*np.log10(a) for a in 0.000001*np.interp(magnitudes,errmag,noise)]#[quadFit(popt[0],popt[1],popt[2],popt[3],popt[4],popt[5],a) \
       #for a in magnitudes]  #popt[0]*a**4 + popt[1]*a**3 + popt[2]*a**2 + popt[3]*a + popt[4]
 
 def calcSNR(magnitudes,magnituderrs):
-   return (max(magnitudes)-min(magnitudes))/np.mean(magnituderrs)#np.std(magnituderrs)
+   return abs(10**(-0.4*(max(magnitudes)-min(magnitudes))))/(10**-0.4*np.mean(magnituderrs))#np.std(magnituderrs)
 
 
 ### Overarching FUNCTIONS
@@ -162,13 +173,16 @@ def doTransit(teff,rp,mp,a,d,i,tw,tr,tm,te2):
    ckw,ckfd = modelReader(teff)
    ms = calcStarMass(teff)
    rs = calcStarRadius(ms)
+   #print(ms)
    stflux = convolveFilter(tr,ckfd,rs)
+   print(rs)
    ### Integrate over total flux
    tf = integrateFlux(tw,stflux)
    ### Estimate the orbital period
    p = estimatePeriod(ms,mp,a)
    ### Model the transit curve
    phase, t, f, tangle = calcTransit(tf,p,rp,rs,a,i)
+
    ### Calculate the magnitude
    mags = calcMag(f,d,rs)
    ### Read in TESS errors and fit a function to them
@@ -178,7 +192,19 @@ def doTransit(teff,rp,mp,a,d,i,tw,tr,tm,te2):
    snr = calcSNR(mags,me)
    ### Calculate the approximate total transit time
    tt = calcTotalTransitTime(p,rp,rs,a,i)
-   return snr,tt,tangle,phase,t,mags,me,p
+   #print(snr)
+   #print(tt)
+   #print(tangle)
+   #print(phase)
+   #print(t)
+   #print(mags)
+   #print(me)
+   #print(p)
+   throwaway = (snr,tt,tangle,phase,t,mags,me,p)
+   try:
+      return snr,tt,tangle,phase,t,mags,me,p
+   except:
+      return 0,0,0,0,0,0,0,p
 
 ################ USAGE ######################################
 
@@ -193,7 +219,7 @@ if __name__== "__main__":
    mp = 1.898e27 ### mass of Jupiter in kg
    a = (1.496e11)*5.2 ### Semimajor axis of Jupiter in meters
    i = 90#89.9488
-   d = 10#250#1./(2.06265e5)#10 # distance in parsecs
+   d = 4.8481705933824E-6#10#250#1./(2.06265e5)#10 # distance in parsecs
 
    ckw,ckfd = modelReader(teff)
    interpTESSFilter(ckw)
@@ -215,14 +241,14 @@ if __name__== "__main__":
 
    ### Model the transit curve
    phase, t, f, tangle = calcTransit(tf,p,rp,rs,a,i)
-
+   #print(f)
    ### Calculate the magnitude
    mags = calcMag(f,d,rs)
 
    ### Read in TESS errors and fit a function to them
    tm, te1, te2, te27 = readTessError()
    #polys = fitError(tm,te2)
-   me = calcNoise(tm,0.000001*te2,mags)
+   me = calcNoise(tm,te2,mags)
 
    snr = calcSNR(mags,me)
 
@@ -235,11 +261,41 @@ if __name__== "__main__":
    print('Total transit time = ',str(tt/86400)[0:6],'days')
    print('SNR = ',str(snr)[0:6])
 
-   plt.errorbar((1./86400)*t,mags,yerr=me)
-   plt.plot((1./86400)*t,mags)
+   plt.errorbar([(1./86400)*a - (1./86400)*min(t) for a in t],mags,yerr=me)
+   plt.plot([(1./86400)*a - (1./86400)*min(t) for a in t],mags)
    plt.xlabel('Time (days)')
    plt.ylabel('Magnitude (mag)')
    plt.gca().invert_yaxis()
    plt.figtext(0.7,0.5,'Total transit time \n'+str(tt/86400)[0:6]+' days')
    plt.figtext(0.15,0.5,'SNR = '+str(snr)[0:6]+'')
-   plt.show()
+   plt.savefig('./jupiter_transit.png')
+   plt.close()
+
+
+   plt.plot(tw,100*tr)
+   plt.tight_layout()
+   plt.xlabel('Wavelength (nm)')
+   plt.ylabel('Filter Response (%)')
+   plt.xlim([400,1250])
+   plt.savefig('./tess_filter.png')
+   plt.close()
+
+   plt.plot(ckw,ckfd)
+   plt.xlabel('Wavelength (nm)')
+   plt.tight_layout()
+   plt.ylabel('Flux Surface Density (erg/(cm^2 A s))')
+   plt.xlim([100,2500])
+   plt.savefig('./solar_ck_model.png')
+   plt.close()
+
+   plt.figure()
+   plt.plot(ckw,stflux)
+   plt.tight_layout()
+   plt.xlabel('Wavelength (nm)')
+   plt.ylabel('Flux Surface Density (erg/(cm^2 A s))')
+   plt.xlim([100,1250])
+   plt.savefig('./convolved_model.png')
+   plt.close()
+
+
+   #sn,tt_,ta,ph,t_,ma,merr,per = doTransit(14000,637100,mp,1.5e12,166.8101,90,tw,tr,tm,te2)

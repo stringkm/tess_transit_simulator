@@ -17,17 +17,18 @@ fnames = glob('./ck_models/ckm00/*.ascii')
 ### Get a list of all stellar types in folder
 temps = [int(str(a).split('_')[-1].split('.')[0]) for a in fnames]
 
-### Get 9 planet sizes
-r_p = 6.371e6*np.logspace(-1,3,1)#9)
+### Get 10 planet sizes
+r_p = [6.371e6*10**a for a in np.linspace(-1,2.5,10)]#0)]#9)]#9)
 
 ### Get 5 semimajor axis values
-au = (1.496e11)*np.logspace(-1,2,5)
+au = [(1.496e11)*10**a for a in [1]]#np.logspace(-1,1,5)]
 
 ### Get 10 distances
-d_s = np.logspace(0,2.5,1)#0)
+d_s = [10**a for a in np.linspace(0,2.5,10)]#10)]#0)
 
 ### Get total number of iterations
 tnum = len(temps)*len(r_p)*len(au)*len(d_s)
+print(tnum)
 
 ### Set up pandas dataframe for all outcomes
 stardata = pd.DataFrame({'temp':np.zeros(tnum),'rplanet':np.zeros(tnum),\
@@ -37,28 +38,36 @@ stardata = pd.DataFrame({'temp':np.zeros(tnum),'rplanet':np.zeros(tnum),\
 mpl = 1.898e27
 inc = 90
 
-
+iterator = 0
 
 ### Calculate the transit curve for each grid point
 for t in range(len(temps)):
    for r in range(len(r_p)):
       for d_ in range(len(d_s)):
          for a_ in range(len(au)):
-            stardata['temp'].iloc[t+r+d_+a_] = temps[t]
-            stardata['rplanet'].iloc[t+r+d_+a_] = r_p[r]
-            stardata['dist'].iloc[t+r+d_+a_] = d_s[d_]
-            stardata['a'].iloc[t+r+d_+a_] = au[a_]
 
-            sn,tt_,ta,ph,t_,ma,merr,per = doTransit(temps[t],r_p[r],\
-               mpl,au,d_s[d_],inc,tw_,tr_,tm_,te2_)
+            stardata['temp'].iloc[iterator] = temps[t]
+            stardata['rplanet'].iloc[iterator] = r_p[r]
+            stardata['dist'].iloc[iterator] = d_s[d_]
+            stardata['a'].iloc[iterator] = au[a_]
 
-            stardata['snr'].iloc[t+r+d_+a_] = sn
-            stardata['transit_time'].iloc[t+r+d_+a_] = tt_
-            stardata['period'].iloc[t+r+d_+a_] = per
-            stardata['transitangle'].iloc[t+r+d_+a_] = ta
+            if 1==1:
+               sn,tt_,ta,ph,t_,ma,merr,per = \
+                  doTransit(temps[t],r_p[r],mpl,au[a_],d_s[d_],inc,tw_,tr_,tm_,te2_)
 
-            lc = pd.DataFrame({'time':ph,'phase':t_,'mag':ma,'magerr':merr})
-            lc.to_csv('./output_lc/'+str(int(temps[t]))+'_'+str(r_p[r])+\
-               '_'+str(d_s[d_])+'_'+str(au[a_])+'.csv',header=True,index=False)
+               stardata['snr'].iloc[iterator] = sn
+               stardata['transit_time'].iloc[iterator] = tt_
+               stardata['period'].iloc[iterator] = per
+               stardata['transitangle'].iloc[iterator] = ta
 
+               lc = pd.DataFrame({'time':ph,'phase':t_,'mag':ma,'magerr':merr})
+               lc.to_csv('./output_lc/'+str(int(temps[t]))+'_'+str(r_p[r])+\
+                   '_'+str(d_s[d_])+'_'+str(au[a_])+'.csv',header=True,index=False)
+               iterator = iterator + 1
+               print(time.time()-st,'s elapsed')
+               st = time.time()
+            else:
+               print(iterator,'failed')
+               iterator = iterator + 1
+               pass
 stardata.to_csv('./star_results.csv',header=True,index=False)
